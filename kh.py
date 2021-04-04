@@ -43,32 +43,20 @@ scramble_key = [
 game_path = Path("G:/Games/Kingdom Hearts HD 1.5+2.5 ReMIX/Image")
 out_path = game_path.joinpath("out")
 
-# def decrypt(infile) -> bytes:
-#     pass_count = 10
-#     key = generate_key(infile.read(0x10), pass_count)
-#     data = infile.read(0x100)
 
-#     for i in range(0, 0x100, 0x10):
-#         decrypt_chunk(key, data, i, pass_count)
-#     return data
-
-
+# https://github.com/Xeeynamo/OpenKh/pull/474
 def generate_key(seed: list, pass_count: int) -> list:
     final_key = [None] * 0xB0
     for i in range(len(seed)):
         final_key[i] = i if seed[i] == 0 else seed[i]
 
     for i in range(pass_count * 4):
-        # frame = final_key.AsSpan()[(0x0C + i * 4)..(0x10 + i * 4)]
         frame = [
             final_key[0x0C + i * 4],
             final_key[0x0D + i * 4],
             final_key[0x0E + i * 4],
             final_key[0x0F + i * 4],
         ]
-        # frame = []
-        # for j in range(0x0C + i * 4, 0x10 + i * 4, 1):
-        #     frame.append(j)
         if (i % 4) == 0:
             frame = [
                 master_key[frame[1]] ^ scramble_key[i + 0],
@@ -86,7 +74,6 @@ def generate_key(seed: list, pass_count: int) -> list:
 
 
 def decrypt_chunk(key: bytes, ptr_data: bytearray, index: int, pass_count: int) -> None:
-    # for i in range(pass_count + 1, 0, -1):
     for i in reversed(range(pass_count + 1)):
         ptr_data[0x00 + index] ^= key[0x00 + 0x10 * i]
         ptr_data[0x01 + index] ^= key[0x01 + 0x10 * i]
@@ -104,7 +91,6 @@ def decrypt_chunk(key: bytes, ptr_data: bytearray, index: int, pass_count: int) 
         ptr_data[0x0D + index] ^= key[0x0D + 0x10 * i]
         ptr_data[0x0E + index] ^= key[0x0E + 0x10 * i]
         ptr_data[0x0F + index] ^= key[0x0F + 0x10 * i]
-        # i -= 1
 
 
 def get_hashes(file_section: str) -> Dict[str, str]:
@@ -135,10 +121,10 @@ def extract_hed(input_hed: Path):
             print(f"{padding=}")
         # print(f"{compressed_size=}")
         # print(f"{decompressed_size=}")
-        # try:
-        name = hash_dict[hash]
-        # except KeyError:
-        #     name = hash.upper()
+        try:
+            name = hash_dict[hash]
+        except KeyError:
+            name = hash.upper()
         if name == "":
             name = hash.upper()
         entries_hed.append((name, offset, compressed_size, decompressed_size))
@@ -197,7 +183,6 @@ def extract_hed(input_hed: Path):
             )
             # size_sub_entries = sum([se[4] for se in sub_entries])
             # print(f"{size_sub_entries=}")
-            # print(f"{size2+size_sub_entries}")
 
         pass_count = 10
         key = generate_key(seed, pass_count)
@@ -214,7 +199,6 @@ def extract_hed(input_hed: Path):
             file = zlib.decompress(file)
         file_path = out_path.joinpath(f"{input_hed.stem}/{hed_name}")
         file_path.parent.mkdir(parents=True, exist_ok=True)
-        # with open(out_path.joinpath(f"{i:04}_{id1}"), "wb") as outfile:
         with open(file_path, "wb") as outfile:
             outfile.write(file)
 
@@ -246,13 +230,9 @@ def extract_hed(input_hed: Path):
                 file_path.parent.joinpath(f"{file_path.stem}{sub_entry_name}"), "wb"
             ) as outfile:
                 outfile.write(sub_file)
-            # exit()
 
-        print(f"-------------- {infile_pkg.tell():08X}")
-        # print (f"{i=}")
-        # if i == 154:
-        #     exit()
+        # print(f"-------------- {infile_pkg.tell():08X}")
+        print("--------------")
 
 
-# extract_hed(game_path.joinpath("en/bbs_first.hed"))
-extract_hed(game_path.joinpath("en/kh1_first.hed"))
+extract_hed(game_path.joinpath("en/bbs_first.hed"))
