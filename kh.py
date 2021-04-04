@@ -157,28 +157,28 @@ def extract_hed(input_hed: Path):
 
         sub_entries = []
         for _ in range(num_sub_entries):
-            sub_entry_name = (
+            asset_name = (
                 unpack("32s", infile_pkg.read(32))[0].decode("utf-8").rstrip("\x00")
             )
             (
-                sub_entry_unk1,
-                sub_entry_unk2,
-                sub_entry_decompressed_size,
-                sub_entry_compressed_size,
+                asset_unk1,
+                asset_unk2,
+                asset_decompressed_size,
+                asset_compressed_size,
             ) = unpack("4i", infile_pkg.read(16))
-            print(f"{sub_entry_name=}")
-            print(f"{sub_entry_unk1=}")
-            print(f"{sub_entry_unk2=}")
-            print(f"{sub_entry_unk1=}")
-            # print(f"{sub_entry_compressed_size=}")
-            # print(f"{sub_entry_decompressed_size=}")
+            print(f"{asset_name=}")
+            print(f"{asset_unk1=}")
+            print(f"{asset_unk2=}")
+            print(f"{asset_unk1=}")
+            # print(f"{asset_compressed_size=}")
+            # print(f"{asset_decompressed_size=}")
             sub_entries.append(
                 (
-                    sub_entry_name,
-                    sub_entry_unk1,
-                    sub_entry_unk2,
-                    sub_entry_decompressed_size,
-                    sub_entry_compressed_size,
+                    asset_name,
+                    asset_unk1,
+                    asset_unk2,
+                    asset_decompressed_size,
+                    asset_compressed_size,
                 )
             )
             # size_sub_entries = sum([se[4] for se in sub_entries])
@@ -203,31 +203,31 @@ def extract_hed(input_hed: Path):
             outfile.write(file)
 
         for (
-            sub_entry_name,
-            sub_entry_unk1,
-            sub_entry_unk2,
-            sub_entry_decompressed_size,
-            sub_entry_compressed_size,
+            asset_name,
+            asset_unk1,
+            asset_unk2,
+            asset_decompressed_size,
+            asset_compressed_size,
         ) in sub_entries:
-            sub_entry_decompressed_size_padding = (
-                sub_entry_decompressed_size
-                if sub_entry_decompressed_size % 16 == 0
-                else 16 + (sub_entry_decompressed_size // 16) * 16
+            asset_decompressed_size_padding = (
+                asset_decompressed_size
+                if asset_decompressed_size % 16 == 0
+                else 16 + (asset_decompressed_size // 16) * 16
             )
-            # print(f"{sub_entry_decompressed_size_padding=}")
+            # print(f"{asset_decompressed_size_padding=}")
             sub_file = bytearray(
                 infile_pkg.read(
-                    sub_entry_decompressed_size_padding
-                    if sub_entry_compressed_size < 0
-                    else sub_entry_compressed_size
+                    asset_decompressed_size_padding
+                    if asset_compressed_size < 0
+                    else asset_compressed_size
                 )
             )
             for i in range(0, min(len(sub_file), 0x100), 0x10):
                 decrypt_chunk(key, sub_file, i, pass_count)
-            if sub_entry_compressed_size > 0:
+            if asset_compressed_size > 0:
                 sub_file = zlib.decompress(sub_file)
             with open(
-                file_path.parent.joinpath(f"{file_path.stem}{sub_entry_name}"), "wb"
+                file_path.parent.joinpath(f"{file_path.stem}{asset_name}"), "wb"
             ) as outfile:
                 outfile.write(sub_file)
 
