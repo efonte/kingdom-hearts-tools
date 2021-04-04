@@ -1,10 +1,12 @@
+import configparser
 import os
+import zlib
 from pathlib import Path
 from struct import pack, unpack
 from typing import Dict, List
+
 from rich import print
-import zlib
-import configparser
+from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn
 
 # fmt: off
 master_key = [
@@ -41,6 +43,7 @@ scramble_key = [
 # fmt: on
 
 game_path = Path("G:/Games/Kingdom Hearts HD 1.5+2.5 ReMIX/Image")
+game_path = Path("G:/Juegos instalados/Kingdom Hearts HD 1 5 and 2 5 ReMIX/Image")
 out_path = game_path.joinpath("out")
 
 
@@ -109,130 +112,161 @@ def extract_hed(input_hed: Path):
 
     hash_dict = get_hashes(input_hed.relative_to(game_path).as_posix())
 
-    entries_hed = []
-    for _ in range(file_hed_size // 32):
-        hash = "".join([f"{b:02x}" for b in infile_hed.read(16)])
-        # print(f"{hash=}")
-        offset, padding, compressed_size, decompressed_size = unpack(
-            "4I", infile_hed.read(16)
-        )
-        # print(f"{offset=:08X}")
-        if padding != 0:
-            print(f"{padding=}")
-        # print(f"{compressed_size=}")
-        # print(f"{decompressed_size=}")
-        try:
-            name = hash_dict[hash]
-        except KeyError:
-            name = hash.upper()
-        if name == "":
-            name = hash.upper()
-        entries_hed.append((name, offset, compressed_size, decompressed_size))
-
-    infile_pkg = open(input_pkg, "rb")
-    for i, (
-        hed_name,
-        hed_offset,
-        hed_compressed_size,
-        hed_decompressed_size,
-    ) in enumerate(entries_hed):
-        if infile_pkg.tell() != hed_offset:
-            print(f"Error. Last offset: {infile_pkg.tell():08X}")
-            print(f"{hed_offset=:08X}")
-            exit()
-        infile_pkg.seek(hed_offset)
-        seed = list(unpack("16B", infile_pkg.read(16)))
-        decompressed_size, num_sub_entries, compressed_size, id1 = unpack(
-            "4i", bytearray(seed)
-        )
-        print(f"{hed_name=}")
-        # if hed_compressed_size != compressed_size + 16: # Only if num_sub_entries == 0
-        # print(f"{hed_compressed_size=}")
-        # print(f"{compressed_size=}")
-        if hed_decompressed_size != decompressed_size:
-            print(f"{hed_decompressed_size=}")
-            print(f"{decompressed_size=}")
-        print(f"{num_sub_entries=}")
-        print(f"{id1=}")
-
-        sub_entries = []
-        for _ in range(num_sub_entries):
-            asset_name = (
-                unpack("32s", infile_pkg.read(32))[0].decode("utf-8").rstrip("\x00")
+    num_entries = file_hed_size // 32
+    with Progress(
+        "{task.description}",
+        SpinnerColumn(),
+        BarColumn(),
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+    ) as progress:
+        task_hed = progress.add_task("Reading hed file...", total=num_entries)
+        entries_hed = []
+        for _ in range(num_entries):
+            hash = "".join([f"{b:02x}" for b in infile_hed.read(16)])
+            # print(f"{hash=}")
+            offset, padding, compressed_size, decompressed_size = unpack(
+                "4I", infile_hed.read(16)
             )
-            (
-                asset_unk1,
-                asset_unk2,
-                asset_decompressed_size,
-                asset_compressed_size,
-            ) = unpack("4i", infile_pkg.read(16))
-            print(f"{asset_name=}")
-            print(f"{asset_unk1=}")
-            print(f"{asset_unk2=}")
-            print(f"{asset_unk1=}")
-            # print(f"{asset_compressed_size=}")
-            # print(f"{asset_decompressed_size=}")
-            sub_entries.append(
+            # print(f"{offset=:08X}")
+            if padding != 0:
+                print(f"{padding=}")
+            # print(f"{compressed_size=}")
+            # print(f"{decompressed_size=}")
+            try:
+                name = hash_dict[hash]
+            except KeyError:
+                name = hash.upper()
+            if name == "":
+                name = hash.upper()
+            entries_hed.append((name, offset, compressed_size, decompressed_size))
+            progress.advance(task_hed)
+
+        infile_pkg = open(input_pkg, "rb")
+        task_pkg = progress.add_task("Reading pkg file...", total=len(entries_hed))
+        task_assets = None
+        # task_assets = progress.add_task(f"")
+        for i, (
+            hed_name,
+            hed_offset,
+            hed_compressed_size,
+            hed_decompressed_size,
+        ) in enumerate(entries_hed, start=1):
+            # ) in enumerate(track(entries_hed, description="Reading pkg file...")):
+            if infile_pkg.tell() != hed_offset:
+                print(f"Error. Last offset: {infile_pkg.tell():08X}")
+                print(f"{hed_offset=:08X}")
+                exit()
+            infile_pkg.seek(hed_offset)
+            seed = list(unpack("16B", infile_pkg.read(16)))
+            decompressed_size, num_sub_entries, compressed_size, id1 = unpack(
+                "4i", bytearray(seed)
+            )
+            # print(f"{hed_name=}")
+            # if hed_compressed_size != compressed_size + 16: # Only if num_sub_entries == 0
+            # print(f"{hed_compressed_size=}")
+            # print(f"{compressed_size=}")
+            if hed_decompressed_size != decompressed_size:
+                print(f"{hed_decompressed_size=}")
+                print(f"{decompressed_size=}")
+            # print(f"{num_sub_entries=}")
+            # print(f"{id1=}")
+
+            sub_entries = []
+            if num_sub_entries != 0:
+                task_assets_desc = (
+                    # f"Extracting assets from file #{str(i).zfill(len(str(len(entries_hed))))}..."
+                    # f'Extracting "{hed_name}" assets ...'
+                )
+                if not task_assets:
+                    task_assets = progress.add_task(
+                        task_assets_desc,
+                        total=num_sub_entries,
+                    )
+                else:
+                    progress.update(
+                        task_assets,
+                        description=task_assets_desc,
+                        total=num_sub_entries,
+                    )
+            for _ in range(num_sub_entries):
+                asset_name = (
+                    unpack("32s", infile_pkg.read(32))[0].decode("utf-8").rstrip("\x00")
+                )
                 (
-                    asset_name,
                     asset_unk1,
                     asset_unk2,
                     asset_decompressed_size,
                     asset_compressed_size,
+                ) = unpack("4i", infile_pkg.read(16))
+                # print(f"{asset_name=}")
+                # print(f"{asset_unk1=}")
+                # print(f"{asset_unk2=}")
+                # print(f"{asset_compressed_size=}")
+                # print(f"{asset_decompressed_size=}")
+                sub_entries.append(
+                    (
+                        asset_name,
+                        asset_unk1,
+                        asset_unk2,
+                        asset_decompressed_size,
+                        asset_compressed_size,
+                    )
                 )
-            )
-            # size_sub_entries = sum([se[4] for se in sub_entries])
-            # print(f"{size_sub_entries=}")
+                # size_sub_entries = sum([se[4] for se in sub_entries])
+                # print(f"{size_sub_entries=}")
+                progress.advance(task_assets)
+            # progress.remove_task(task_assets)
 
-        pass_count = 10
-        key = generate_key(seed, pass_count)
-        # print(f"{seed=}")
-        # print(f"{key=}")
-        file = bytearray(
-            infile_pkg.read(
-                decompressed_size if compressed_size < 0 else compressed_size
-            )
-        )
-        for i in range(0, min(len(file), 0x100), 0x10):
-            decrypt_chunk(key, file, i, pass_count)
-        if compressed_size > 0:
-            file = zlib.decompress(file)
-        file_path = out_path.joinpath(f"{input_hed.stem}/{hed_name}")
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(file_path, "wb") as outfile:
-            outfile.write(file)
-
-        for (
-            asset_name,
-            asset_unk1,
-            asset_unk2,
-            asset_decompressed_size,
-            asset_compressed_size,
-        ) in sub_entries:
-            asset_decompressed_size_padding = (
-                asset_decompressed_size
-                if asset_decompressed_size % 16 == 0
-                else 16 + (asset_decompressed_size // 16) * 16
-            )
-            # print(f"{asset_decompressed_size_padding=}")
-            sub_file = bytearray(
+            pass_count = 10
+            key = generate_key(seed, pass_count)
+            # print(f"{seed=}")
+            # print(f"{key=}")
+            file = bytearray(
                 infile_pkg.read(
-                    asset_decompressed_size_padding
-                    if asset_compressed_size < 0
-                    else asset_compressed_size
+                    decompressed_size if compressed_size < 0 else compressed_size
                 )
             )
-            for i in range(0, min(len(sub_file), 0x100), 0x10):
-                decrypt_chunk(key, sub_file, i, pass_count)
-            if asset_compressed_size > 0:
-                sub_file = zlib.decompress(sub_file)
-            with open(
-                file_path.parent.joinpath(f"{file_path.stem}{asset_name}"), "wb"
-            ) as outfile:
-                outfile.write(sub_file)
+            for i in range(0, min(len(file), 0x100), 0x10):
+                decrypt_chunk(key, file, i, pass_count)
+            if compressed_size > 0:
+                file = zlib.decompress(file)
+            file_path = out_path.joinpath(f"{input_hed.stem}/{hed_name}")
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(file_path, "wb") as outfile:
+                outfile.write(file)
 
-        # print(f"-------------- {infile_pkg.tell():08X}")
-        print("--------------")
+            for (
+                asset_name,
+                asset_unk1,
+                asset_unk2,
+                asset_decompressed_size,
+                asset_compressed_size,
+            ) in sub_entries:
+                asset_decompressed_size_padding = (
+                    asset_decompressed_size
+                    if asset_decompressed_size % 16 == 0
+                    else 16 + (asset_decompressed_size // 16) * 16
+                )
+                # print(f"{asset_decompressed_size_padding=}")
+                sub_file = bytearray(
+                    infile_pkg.read(
+                        asset_decompressed_size_padding
+                        if asset_compressed_size < 0
+                        else asset_compressed_size
+                    )
+                )
+                for i in range(0, min(len(sub_file), 0x100), 0x10):
+                    decrypt_chunk(key, sub_file, i, pass_count)
+                if asset_compressed_size > 0:
+                    sub_file = zlib.decompress(sub_file)
+                with open(
+                    file_path.parent.joinpath(f"{file_path.stem}{asset_name}"), "wb"
+                ) as outfile:
+                    outfile.write(sub_file)
+            progress.advance(task_pkg)
+
+            # print(f"-------------- {infile_pkg.tell():08X}")
+            # print("--------------")
 
 
 extract_hed(game_path.joinpath("en/bbs_first.hed"))
