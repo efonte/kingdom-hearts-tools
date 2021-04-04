@@ -1,3 +1,7 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+
 import configparser
 import os
 import zlib
@@ -5,8 +9,9 @@ from pathlib import Path
 from struct import pack, unpack
 from typing import Dict, List
 
+import typer
 from rich import print
-from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn
+from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
 
 # fmt: off
 master_key = [
@@ -41,10 +46,6 @@ scramble_key = [
     0x00,
 ]
 # fmt: on
-
-game_path = Path("G:/Games/Kingdom Hearts HD 1.5+2.5 ReMIX/Image")
-game_path = Path("G:/Juegos instalados/Kingdom Hearts HD 1 5 and 2 5 ReMIX/Image")
-out_path = game_path.joinpath("out")
 
 
 # https://github.com/Xeeynamo/OpenKh/pull/474
@@ -102,15 +103,24 @@ def get_hashes(file_section: str) -> Dict[str, str]:
     return dict(config[file_section])
 
 
-def extract_hed(input_hed: Path):
-    input_pkg = input_hed.with_suffix(".pkg")
-    infile_hed = open(input_hed, "rb")
+def extract_hed(hed_path: Path, out_path: Path):
+    pkg_path = hed_path.with_suffix(".pkg")
+    infile_hed = open(hed_path, "rb")
+
+    image_path = None
+    for parent in hed_path.absolute().parents:
+        if parent.name == "Image":
+            image_path = parent
+            break
+    if not image_path:
+        print("Error. Image folder from game installation not found.")
+        exit(1)
 
     infile_hed.seek(0, os.SEEK_END)
     file_hed_size = infile_hed.tell()
     infile_hed.seek(0)
 
-    hash_dict = get_hashes(input_hed.relative_to(game_path).as_posix())
+    hash_dict = get_hashes(hed_path.relative_to(image_path).as_posix())
 
     num_entries = file_hed_size // 32
     with Progress(
@@ -141,7 +151,7 @@ def extract_hed(input_hed: Path):
             entries_hed.append((name, offset, compressed_size, decompressed_size))
             progress.advance(task_hed)
 
-        infile_pkg = open(input_pkg, "rb")
+        infile_pkg = open(pkg_path, "rb")
         task_pkg = progress.add_task("Reading pkg file...", total=len(entries_hed))
         task_assets = None
         # task_assets = progress.add_task(f"")
@@ -174,7 +184,7 @@ def extract_hed(input_hed: Path):
             sub_entries = []
             if num_sub_entries != 0:
                 task_assets_desc = (
-                    # f"Extracting assets from file #{str(i).zfill(len(str(len(entries_hed))))}..."
+                    f"Extracting assets from file #{str(i).zfill(len(str(len(entries_hed))))}..."
                     # f'Extracting "{hed_name}" assets ...'
                 )
                 if not task_assets:
@@ -230,7 +240,7 @@ def extract_hed(input_hed: Path):
                 decrypt_chunk(key, file, i, pass_count)
             if compressed_size > 0:
                 file = zlib.decompress(file)
-            file_path = out_path.joinpath(f"{input_hed.stem}/{hed_name}")
+            file_path = out_path.joinpath(f"{hed_name}")
             file_path.parent.mkdir(parents=True, exist_ok=True)
             with open(file_path, "wb") as outfile:
                 outfile.write(file)
@@ -269,4 +279,29 @@ def extract_hed(input_hed: Path):
             # print("--------------")
 
 
-extract_hed(game_path.joinpath("en/bbs_first.hed"))
+app = typer.Typer()
+
+
+@app.command()
+def extract(
+    input: Path = typer.Argument(..., help="hed file path"),
+    output: Path = typer.Option(None, "--output", "-o", help="folder path"),
+    # verbose: bool = typer.Option(
+    #     False,
+    #     "--verbose",
+    #     "-v",
+    #     help="Verbose mode",
+    # ),
+):
+    if not input.is_file():
+        print(f'Error. The file "{input}" does not exist.')
+        raise typer.Abort()
+
+    if not output:
+        output = input.with_suffix("")
+
+    extract_hed(input, output)
+
+
+if __name__ == "__main__":
+    app()
