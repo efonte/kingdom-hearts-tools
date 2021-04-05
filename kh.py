@@ -49,7 +49,7 @@ scramble_key = [
 
 
 # https://github.com/Xeeynamo/OpenKh/pull/474
-def generate_key(seed: list, pass_count: int) -> list:
+def generate_key(seed: list, pass_count: int = 10) -> list:
     final_key = [None] * 0xB0
     for i in range(len(seed)):
         final_key[i] = i if seed[i] == 0 else seed[i]
@@ -77,24 +77,12 @@ def generate_key(seed: list, pass_count: int) -> list:
     return final_key
 
 
-def decrypt_chunk(key: bytes, ptr_data: bytearray, index: int, pass_count: int) -> None:
+def decrypt_chunk(
+    key: bytes, ptr_data: bytearray, index: int, pass_count: int = 10
+) -> None:
     for i in reversed(range(pass_count + 1)):
-        ptr_data[0x00 + index] ^= key[0x00 + 0x10 * i]
-        ptr_data[0x01 + index] ^= key[0x01 + 0x10 * i]
-        ptr_data[0x02 + index] ^= key[0x02 + 0x10 * i]
-        ptr_data[0x03 + index] ^= key[0x03 + 0x10 * i]
-        ptr_data[0x04 + index] ^= key[0x04 + 0x10 * i]
-        ptr_data[0x05 + index] ^= key[0x05 + 0x10 * i]
-        ptr_data[0x06 + index] ^= key[0x06 + 0x10 * i]
-        ptr_data[0x07 + index] ^= key[0x07 + 0x10 * i]
-        ptr_data[0x08 + index] ^= key[0x08 + 0x10 * i]
-        ptr_data[0x09 + index] ^= key[0x09 + 0x10 * i]
-        ptr_data[0x0A + index] ^= key[0x0A + 0x10 * i]
-        ptr_data[0x0B + index] ^= key[0x0B + 0x10 * i]
-        ptr_data[0x0C + index] ^= key[0x0C + 0x10 * i]
-        ptr_data[0x0D + index] ^= key[0x0D + 0x10 * i]
-        ptr_data[0x0E + index] ^= key[0x0E + 0x10 * i]
-        ptr_data[0x0F + index] ^= key[0x0F + 0x10 * i]
+        for j in range(0xF + 1):
+            ptr_data[j + index] ^= key[j + 0x10 * i]
 
 
 def get_hashes(file_section: str) -> Dict[str, str]:
@@ -131,12 +119,16 @@ def extract_hed(hed_path: Path, out_path: Path):
     ) as progress:
         task_hed = progress.add_task("Reading hed file...", total=num_entries)
         entries_hed = []
-        for _ in range(num_entries):
+        for i in range(num_entries):
             hash = "".join([f"{b:02x}" for b in infile_hed.read(16)])
             # print(f"{hash=}")
             offset, padding, compressed_size, decompressed_size = unpack(
-                "4I", infile_hed.read(16)
+                "4i", infile_hed.read(16)
             )
+            # if decompressed_size < 0:
+            #     print(f"{i=}")
+            #     print(f"{decompressed_size=}")
+            #     # exit()
             # print(f"{offset=:08X}")
             if padding != 0:
                 print(f"{padding=}")
@@ -162,10 +154,11 @@ def extract_hed(hed_path: Path, out_path: Path):
             hed_decompressed_size,
         ) in enumerate(entries_hed, start=1):
             # ) in enumerate(track(entries_hed, description="Reading pkg file...")):
-            if infile_pkg.tell() != hed_offset:
-                print(f"Error. Last offset: {infile_pkg.tell():08X}")
-                print(f"{hed_offset=:08X}")
-                exit()
+            # if infile_pkg.tell() != hed_offset:
+            #     # print (f"{i=}")
+            #     print(f"Error. Last pkg offset: {infile_pkg.tell():08X}")
+            #     print(f"{hed_offset=:08X}")
+            #     exit()
             infile_pkg.seek(hed_offset)
             seed = list(unpack("16B", infile_pkg.read(16)))
             decompressed_size, num_sub_entries, compressed_size, id1 = unpack(
@@ -227,8 +220,7 @@ def extract_hed(hed_path: Path, out_path: Path):
                 progress.advance(task_assets)
             # progress.remove_task(task_assets)
 
-            pass_count = 10
-            key = generate_key(seed, pass_count)
+            key = generate_key(seed)
             # print(f"{seed=}")
             # print(f"{key=}")
             file = bytearray(
@@ -237,7 +229,7 @@ def extract_hed(hed_path: Path, out_path: Path):
                 )
             )
             for i in range(0, min(len(file), 0x100), 0x10):
-                decrypt_chunk(key, file, i, pass_count)
+                decrypt_chunk(key, file, i)
             if compressed_size > 0:
                 file = zlib.decompress(file)
             file_path = out_path.joinpath(f"{hed_name}")
@@ -266,7 +258,7 @@ def extract_hed(hed_path: Path, out_path: Path):
                     )
                 )
                 for i in range(0, min(len(sub_file), 0x100), 0x10):
-                    decrypt_chunk(key, sub_file, i, pass_count)
+                    decrypt_chunk(key, sub_file, i)
                 if asset_compressed_size > 0:
                     sub_file = zlib.decompress(sub_file)
                 with open(
@@ -301,6 +293,27 @@ def extract(
         output = input.with_suffix("")
 
     extract_hed(input, output)
+
+
+# @app.command()
+# def decrypt(
+#     input: Path = typer.Argument(..., help="file path"),
+# ):
+#     if not input.is_file():
+#         print(f'Error. The file "{input}" does not exist.')
+#         raise typer.Abort()
+
+#     infile = open(input, "rb")
+#     seed = list(infile.read(16))
+#     key = generate_key(seed) # TODO
+#     infile.seek(0)
+#     file = bytearray(infile.read())
+
+#     for i in range(0, min(len(file), 0x100), 0x10):
+#         decrypt_chunk(key, file, i)
+
+#     with open(input.with_stem(f"{input.stem}_dec"), "wb") as outfile:
+#         outfile.write(file)
 
 
 if __name__ == "__main__":
