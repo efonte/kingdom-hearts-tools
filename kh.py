@@ -16,18 +16,6 @@ from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
 
 
 @dataclass
-class EntryHED:
-    name: str
-    offset: int
-    padding: int  # Maybe flag?
-    compressed_size: int
-    decompressed_size: int
-
-    def __init__(self) -> None:
-        pass
-
-
-@dataclass
 class Asset:
     name: str
     unk1: int
@@ -60,6 +48,28 @@ class EntryPKG:
 
     def __init__(self) -> None:
         self.assets = []
+
+
+@dataclass
+class EntryHED:
+    md5: str
+    offset: int
+    padding: int  # Maybe flag?
+    compressed_size: int
+    decompressed_size: int
+    entry_pkg: EntryPKG
+
+    def __init__(self) -> None:
+        pass
+
+    def get_name(self, hash_dict: Dict[str, str]) -> str:
+        try:
+            name = hash_dict[self.md5.lower()]
+        except KeyError:
+            name = self.md5.upper()
+        if name == "":
+            name = self.md5.upper()
+        return name
 
 
 # fmt: off
@@ -134,32 +144,35 @@ def decrypt_chunk(
             ptr_data[j + index] ^= key[j + 0x10 * i]
 
 
-def get_hashes(file_section: str) -> Dict[str, str]:
+def get_hashes(hed_path: Path) -> Dict[str, str]:
+    file_section = hed_path.relative_to(get_image_path(hed_path)).as_posix()
     config = configparser.ConfigParser()
     config.read("./hashes.ini")
     return dict(config[file_section])
 
 
-def extract_hed(hed_path: Path, out_path: Path):
-    pkg_path = hed_path.with_suffix(".pkg")
-    infile_hed = open(hed_path, "rb")
+def get_last_offset(infile) -> int:
+    current_offset = infile.tell()
+    infile.seek(0, os.SEEK_END)
+    offset = infile.tell()
+    infile.seek(current_offset)
+    return offset
 
-    image_path = None
+
+def get_image_path(hed_path: Path) -> Path:
     for parent in hed_path.absolute().parents:
         if parent.name == "Image":
-            image_path = parent
-            break
-    if not image_path:
-        print("Error. Image folder from game installation not found.")
-        exit(1)
+            return parent
+    print("Error. Image folder from game installation not found.")
+    exit(1)
 
-    infile_hed.seek(0, os.SEEK_END)
-    file_hed_size = infile_hed.tell()
-    infile_hed.seek(0)
 
-    hash_dict = get_hashes(hed_path.relative_to(image_path).as_posix())
+def extract_hed(hed_path: Path, out_path: Path, extract_files: bool = True):
+    pkg_path = hed_path.with_suffix(".pkg")
+    infile_hed = open(hed_path, "rb")
+    hash_dict = get_hashes(hed_path)
+    num_entries = get_last_offset(infile_hed) // 32
 
-    num_entries = file_hed_size // 32
     with Progress(
         "{task.description}",
         SpinnerColumn(),
@@ -170,29 +183,16 @@ def extract_hed(hed_path: Path, out_path: Path):
         entries_hed: List[EntryHED] = []
         for i in range(num_entries):
             entry_hed = EntryHED()
-            hash = "".join([f"{b:02x}" for b in infile_hed.read(16)])
-            # print(f"{hash=}")
+            entry_hed.md5 = "".join([f"{b:02x}" for b in infile_hed.read(16)])
             (
                 entry_hed.offset,
                 entry_hed.padding,
                 entry_hed.compressed_size,
                 entry_hed.decompressed_size,
             ) = unpack("IIii", infile_hed.read(16))
-            # if decompressed_size < 0:
-            #     print(f"{i=}")
-            #     print(f"{decompressed_size=}")
-            #     # exit()
-            # print(f"{offset=:08X}")
-            # if padding != 0:
-            #     print(f"{padding=}")
-            # print(f"{entry_hed.compressed_size=}")
-            # print(f"{entry_hed.decompressed_size=}")
-            try:
-                entry_hed.name = hash_dict[hash]
-            except KeyError:
-                entry_hed.name = hash.upper()
-            if entry_hed.name == "":
-                entry_hed.name = hash.upper()
+            # if entry_hed.padding != 0:
+            #     print(f"{entry_hed.padding=}")
+            # print(f"{entry_hed}")
 
             entries_hed.append(entry_hed)
             progress.advance(task_hed)
@@ -208,7 +208,7 @@ def extract_hed(hed_path: Path, out_path: Path):
             #     print(f"{entry_hed.offset=:08X}")
             #     exit()
             # print(f"{infile_pkg.tell():08X}")
-            # infile_pkg.seek(entry_hed.offset) # TODO
+            infile_pkg.seek(entry_hed.offset)  # TODO
             seed = list(unpack("16B", infile_pkg.read(16)))
             # print(f"{seed=}")
             (
@@ -217,7 +217,7 @@ def extract_hed(hed_path: Path, out_path: Path):
                 entry_pkg.compressed_size,
                 entry_pkg.id1,
             ) = unpack("IIII", bytearray(seed))
-            # print(f"{entry_hed.name=}")
+            # print(f"{entry_hed.get_name(hash_dict)=}")
             # if entry_hed.compressed_size != entry_pkg.compressed_size + 16: # Only if num_assets == 0
             # print(f"{entry_hed.compressed_size=}")
             # print(f"{entry_pkg.compressed_size=}")
@@ -228,10 +228,7 @@ def extract_hed(hed_path: Path, out_path: Path):
             # print(f"{entry_pkg.id1=}")
 
             if entry_pkg.num_assets != 0:
-                task_assets_desc = (
-                    f"Extracting assets from file #{str(i).zfill(len(str(len(entries_hed))))}..."
-                    # f'Extracting "{entry_hed.name}" assets ...'
-                )
+                task_assets_desc = f"Extracting assets from file #{str(i).zfill(len(str(len(entries_hed))))}..."
                 if not task_assets:
                     task_assets = progress.add_task(
                         task_assets_desc,
@@ -292,10 +289,11 @@ def extract_hed(hed_path: Path, out_path: Path):
                     print(f"{entry_pkg.compressed_size=}")
                     exit()
 
-            file_path = out_path.joinpath(f"{entry_hed.name}")
-            file_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(file_path, "wb") as outfile:
-                outfile.write(file)
+            file_path = out_path.joinpath(f"{entry_hed.get_name(hash_dict)}")
+            if extract_files:
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(file_path, "wb") as outfile:
+                    outfile.write(file)
 
             for asset in entry_pkg.assets:
                 # print(f"{asset.decompressed_size_padding=}")
@@ -331,18 +329,21 @@ def extract_hed(hed_path: Path, out_path: Path):
                         print(f"{asset.compressed_size=}")
                         print(f"{len(asset_file)=}")
                         exit()
-                if asset.unk2 == -1:
-                    asset_path = file_path.parent.joinpath(
-                        f"{file_path.stem}/{asset.name}"
-                    )
-                    asset_path.parent.mkdir(parents=True, exist_ok=True)
-                else:
-                    asset_path = file_path.parent.joinpath(
-                        f"{file_path.stem}{asset.name}"
-                    )
-                # print(f"{asset_path=}")
-                with open(asset_path, "wb") as outfile:
-                    outfile.write(asset_file)
+
+                if extract_files:
+                    if asset.unk2 == -1:
+                        asset_path = file_path.parent.joinpath(
+                            f"{file_path.stem}/{asset.name}"
+                        )
+                        asset_path.parent.mkdir(parents=True, exist_ok=True)
+                    else:
+                        asset_path = file_path.parent.joinpath(
+                            f"{file_path.stem}{asset.name}"
+                        )
+                    # print(f"{asset_path=}")
+                    with open(asset_path, "wb") as outfile:
+                        outfile.write(asset_file)
+
                 # if asset.unk2 == -1:
                 #     exit()
             progress.advance(task_pkg)
@@ -358,6 +359,12 @@ app = typer.Typer()
 def extract(
     input: Path = typer.Argument(..., help="hed file path"),
     output: Path = typer.Option(None, "--output", "-o", help="folder path"),
+    extract: bool = typer.Option(
+        True,
+        "--extract/--no-extract",
+        "-e/-no-e",
+        help="Extract files",
+    ),
     # verbose: bool = typer.Option(
     #     False,
     #     "--verbose",
@@ -372,7 +379,7 @@ def extract(
     if not output:
         output = input.with_suffix("")
 
-    extract_hed(input, output)
+    extract_hed(input, output, extract)
 
 
 # @app.command()
