@@ -54,10 +54,9 @@ class EntryPKG:
 class EntryHED:
     md5: str
     offset: int
-    padding: int  # Maybe flag?
     compressed_size: int
     decompressed_size: int
-    entry_pkg: EntryPKG
+    # entry_pkg: EntryPKG
 
     def __init__(self) -> None:
         pass
@@ -186,12 +185,9 @@ def extract_hed(hed_path: Path, out_path: Path, extract_files: bool = True):
             entry_hed.md5 = "".join([f"{b:02x}" for b in infile_hed.read(16)])
             (
                 entry_hed.offset,
-                entry_hed.padding,
                 entry_hed.compressed_size,
                 entry_hed.decompressed_size,
-            ) = unpack("IIii", infile_hed.read(16))
-            # if entry_hed.padding != 0:
-            #     print(f"{entry_hed.padding=}")
+            ) = unpack("Qii", infile_hed.read(16))
             # print(f"{entry_hed}")
 
             entries_hed.append(entry_hed)
@@ -240,6 +236,8 @@ def extract_hed(hed_path: Path, out_path: Path, extract_files: bool = True):
                         description=task_assets_desc,
                         total=entry_pkg.num_assets,
                     )
+            # print(f"{entry_hed}")
+            # print(f"{entry_pkg}")
             for _ in range(entry_pkg.num_assets):
                 asset = Asset()
                 # print(f"{infile_pkg.tell():08X}")
@@ -331,6 +329,8 @@ def extract_hed(hed_path: Path, out_path: Path, extract_files: bool = True):
                         exit()
 
                 if extract_files:
+                    if asset.unk2 < -1:
+                        print(f"{asset.unk2=}")
                     if asset.unk2 == -1:
                         asset_path = file_path.parent.joinpath(
                             f"{file_path.stem}/{asset.name}"
