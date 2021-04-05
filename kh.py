@@ -130,8 +130,8 @@ def extract_hed(hed_path: Path, out_path: Path):
             #     print(f"{decompressed_size=}")
             #     # exit()
             # print(f"{offset=:08X}")
-            if padding != 0:
-                print(f"{padding=}")
+            # if padding != 0:
+            #     print(f"{padding=}")
             # print(f"{compressed_size=}")
             # print(f"{decompressed_size=}")
             try:
@@ -153,7 +153,6 @@ def extract_hed(hed_path: Path, out_path: Path):
             hed_compressed_size,
             hed_decompressed_size,
         ) in enumerate(entries_hed, start=1):
-            # ) in enumerate(track(entries_hed, description="Reading pkg file...")):
             # if infile_pkg.tell() != hed_offset:
             #     # print (f"{i=}")
             #     print(f"Error. Last pkg offset: {infile_pkg.tell():08X}")
@@ -192,6 +191,7 @@ def extract_hed(hed_path: Path, out_path: Path):
                         total=num_sub_entries,
                     )
             for _ in range(num_sub_entries):
+                # print(f"{infile_pkg.tell():08X}")
                 asset_name = (
                     unpack("32s", infile_pkg.read(32))[0].decode("utf-8").rstrip("\x00")
                 )
@@ -200,7 +200,7 @@ def extract_hed(hed_path: Path, out_path: Path):
                     asset_unk2,  # -1 = subfolder?
                     asset_decompressed_size,
                     asset_compressed_size,
-                ) = unpack("4i", infile_pkg.read(16))
+                ) = unpack("iiII", infile_pkg.read(16))
                 # print(f"{asset_name=}")
                 # print(f"{asset_unk1=}")
                 # print(f"{asset_unk2=}")
@@ -253,13 +253,19 @@ def extract_hed(hed_path: Path, out_path: Path):
                 asset_file = bytearray(
                     infile_pkg.read(
                         asset_decompressed_size_padding
-                        if asset_compressed_size < 0
+                        if (
+                            asset_compressed_size == 0xFFFFFFFF
+                            or asset_compressed_size == 0xFFFFFFFE
+                        )
                         else asset_compressed_size
                     )
                 )
                 for i in range(0, min(len(asset_file), 0x100), 0x10):
                     decrypt_chunk(key, asset_file, i)
-                if asset_compressed_size > 0:
+                if (
+                    asset_compressed_size != 0xFFFFFFFF
+                    and asset_compressed_size != 0xFFFFFFFE
+                ):
                     asset_file = zlib.decompress(asset_file)
                 if asset_unk2 == -1:
                     asset_path = file_path.parent.joinpath(
