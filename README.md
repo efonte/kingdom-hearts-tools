@@ -23,7 +23,7 @@
 ## 🎈 Usage <a name="usage"></a>
 
 ```shell
-python kh.py
+python kh.py "G:\Kingdom Hearts HD 1.5+2.5 ReMIX\Image\en\bbs_first.hed"
 ```
 
 ## ⛏️ Built Using <a name = "built_using"></a>
