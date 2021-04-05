@@ -123,7 +123,7 @@ def extract_hed(hed_path: Path, out_path: Path):
             hash = "".join([f"{b:02x}" for b in infile_hed.read(16)])
             # print(f"{hash=}")
             offset, padding, compressed_size, decompressed_size = unpack(
-                "4i", infile_hed.read(16)
+                "IIii", infile_hed.read(16)
             )
             # if decompressed_size < 0:
             #     print(f"{i=}")
@@ -168,9 +168,9 @@ def extract_hed(hed_path: Path, out_path: Path):
             # if hed_compressed_size != compressed_size + 16: # Only if num_sub_entries == 0
             # print(f"{hed_compressed_size=}")
             # print(f"{compressed_size=}")
-            if hed_decompressed_size != decompressed_size:
-                print(f"{hed_decompressed_size=}")
-                print(f"{decompressed_size=}")
+            # if hed_decompressed_size != decompressed_size:
+            #     print(f"{hed_decompressed_size=}")
+            #     print(f"{decompressed_size=}")
             # print(f"{num_sub_entries=}")
             # print(f"{id1=}")
 
