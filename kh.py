@@ -197,7 +197,7 @@ def extract_hed(hed_path: Path, out_path: Path):
                 )
                 (
                     asset_unk1,
-                    asset_unk2,
+                    asset_unk2,  # -1 = subfolder?
                     asset_decompressed_size,
                     asset_compressed_size,
                 ) = unpack("4i", infile_pkg.read(16))
@@ -250,21 +250,31 @@ def extract_hed(hed_path: Path, out_path: Path):
                     else 16 + (asset_decompressed_size // 16) * 16
                 )
                 # print(f"{asset_decompressed_size_padding=}")
-                sub_file = bytearray(
+                asset_file = bytearray(
                     infile_pkg.read(
                         asset_decompressed_size_padding
                         if asset_compressed_size < 0
                         else asset_compressed_size
                     )
                 )
-                for i in range(0, min(len(sub_file), 0x100), 0x10):
-                    decrypt_chunk(key, sub_file, i)
+                for i in range(0, min(len(asset_file), 0x100), 0x10):
+                    decrypt_chunk(key, asset_file, i)
                 if asset_compressed_size > 0:
-                    sub_file = zlib.decompress(sub_file)
-                with open(
-                    file_path.parent.joinpath(f"{file_path.stem}{asset_name}"), "wb"
-                ) as outfile:
-                    outfile.write(sub_file)
+                    asset_file = zlib.decompress(asset_file)
+                if asset_unk2 == -1:
+                    asset_path = file_path.parent.joinpath(
+                        f"{file_path.stem}/{asset_name}"
+                    )
+                    asset_path.parent.mkdir(parents=True, exist_ok=True)
+                else:
+                    asset_path = file_path.parent.joinpath(
+                        f"{file_path.stem}{asset_name}"
+                    )
+                # print(f"{asset_path=}")
+                with open(asset_path, "wb") as outfile:
+                    outfile.write(asset_file)
+                # if asset_unk2 == -1:
+                #     exit()
             progress.advance(task_pkg)
 
             # print(f"-------------- {infile_pkg.tell():08X}")
