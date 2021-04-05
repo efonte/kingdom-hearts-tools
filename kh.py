@@ -147,7 +147,10 @@ def get_hashes(hed_path: Path) -> Dict[str, str]:
     file_section = hed_path.relative_to(get_image_path(hed_path)).as_posix()
     config = configparser.ConfigParser()
     config.read("./hashes.ini")
-    return dict(config[file_section])
+    try:
+        return dict(config[file_section])
+    except KeyError:
+        return {}
 
 
 def get_last_offset(infile) -> int:
@@ -328,6 +331,7 @@ def extract_hed(hed_path: Path, out_path: Path, extract_files: bool = True):
                         print(f"{len(asset_file)=}")
                         exit()
 
+                # print(f"{asset}")
                 if extract_files:
                     if asset.unk2 < -1:
                         print(f"{asset.unk2=}")
@@ -335,7 +339,13 @@ def extract_hed(hed_path: Path, out_path: Path, extract_files: bool = True):
                         asset_path = file_path.parent.joinpath(
                             f"{file_path.stem}/{asset.name}"
                         )
-                        asset_path.parent.mkdir(parents=True, exist_ok=True)
+                        # print(asset_path)
+                        if asset_path.parent.is_file():
+                            asset_path = file_path.parent.joinpath(
+                                f"{file_path.stem}{asset.name}"
+                            )
+                        else:
+                            asset_path.parent.mkdir(parents=True, exist_ok=True)
                     else:
                         asset_path = file_path.parent.joinpath(
                             f"{file_path.stem}{asset.name}"
