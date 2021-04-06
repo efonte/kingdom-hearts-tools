@@ -16,13 +16,32 @@ from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
 
 
 @dataclass
+class EntryHED:
+    md5: str
+    offset: int
+    compressed_size: int
+    decompressed_size: int
+
+    def __init__(self) -> None:
+        pass
+
+    def get_name(self, hash_dict: Dict[str, str]) -> str:
+        try:
+            name = hash_dict[self.md5.lower()]
+        except KeyError:
+            name = self.md5.upper()
+        if name == "":
+            name = f"{self.md5.upper()}.dat"
+        return name
+
+
+@dataclass
 class Asset:
     name: str
     unk1: int
-    unk2: int  # -1 = subfolder?
+    unk2: int
     decompressed_size: int
     compressed_size: int
-    # file: bytearray
 
     def __init__(self) -> None:
         pass
@@ -38,37 +57,16 @@ class Asset:
 
 @dataclass
 class EntryPKG:
-    # seed: bytes
+    entry_hed: EntryHED
     decompressed_size: int
     num_assets: int
     compressed_size: int
     id1: int
-    # file: bytearray
     assets: List[Asset]
 
-    def __init__(self) -> None:
+    def __init__(self, entry_hed: EntryHED) -> None:
+        self.entry_hed = entry_hed
         self.assets = []
-
-
-@dataclass
-class EntryHED:
-    md5: str
-    offset: int
-    compressed_size: int
-    decompressed_size: int
-    # entry_pkg: EntryPKG
-
-    def __init__(self) -> None:
-        pass
-
-    def get_name(self, hash_dict: Dict[str, str]) -> str:
-        try:
-            name = hash_dict[self.md5.lower()]
-        except KeyError:
-            name = self.md5.upper()
-        if name == "":
-            name = f"{self.md5.upper()}.dat"
-        return name
 
 
 # fmt: off
@@ -174,6 +172,7 @@ def extract_hed(hed_path: Path, out_path: Path, extract_files: bool = True):
     infile_hed = open(hed_path, "rb")
     hash_dict = get_hashes(hed_path)
     num_entries = get_last_offset(infile_hed) // 32
+    out_path.mkdir(parents=True, exist_ok=True)
 
     with Progress(
         "{task.description}",
@@ -199,8 +198,9 @@ def extract_hed(hed_path: Path, out_path: Path, extract_files: bool = True):
         infile_pkg = open(pkg_path, "rb")
         task_pkg = progress.add_task("Reading pkg file...", total=len(entries_hed))
         task_assets = None
+        entries_pkg: List[EntryPKG] = []
         for i, entry_hed in enumerate(entries_hed, start=1):
-            entry_pkg = EntryPKG()
+            entry_pkg = EntryPKG(entry_hed)
             # if infile_pkg.tell() != entry_hed.offset:
             #     # print (f"{i=}")
             #     print(f"Error. Last pkg offset: {infile_pkg.tell():08X}")
@@ -348,10 +348,36 @@ def extract_hed(hed_path: Path, out_path: Path, extract_files: bool = True):
 
                 # if asset.unk2 == -1:
                 #     exit()
+            entries_pkg.append(entry_pkg)
             progress.advance(task_pkg)
 
             # print(f"-------------- {infile_pkg.tell():08X}")
             # print("--------------")
+
+        task_ini = progress.add_task("Saving file table ini file...", total=len(entries_pkg))
+        config = configparser.ConfigParser()
+        for i, entry_pkg in enumerate(entries_pkg):
+            entry_pkg_dict = {
+                "hed_compressed_size": entry_pkg.entry_hed.compressed_size,
+                "hed_decompressed_size": entry_pkg.entry_hed.decompressed_size,
+                # "hed_md5": entry_pkg.entry_hed.md5,
+                "hed_offset": entry_pkg.entry_hed.offset,
+                "pkg_compressed_size": entry_pkg.compressed_size,
+                "pkg_decompressed_size": entry_pkg.decompressed_size,
+                "pkg_id1": entry_pkg.id1,
+                "pkg_num_assets": entry_pkg.num_assets,
+                # assets: List[Asset]
+            }
+            for j, asset in enumerate(entry_pkg.assets):
+                entry_pkg_dict[f"asset{j}_name"] = asset.name
+                entry_pkg_dict[f"asset{j}_unk1"] = asset.unk1
+                entry_pkg_dict[f"asset{j}_unk2"] = asset.unk2
+                entry_pkg_dict[f"asset{j}_decompressed_size"] = asset.decompressed_size
+                entry_pkg_dict[f"asset{j}_compressed_size"] = asset.compressed_size
+            config[entry_pkg.entry_hed.md5] = entry_pkg_dict
+            progress.advance(task_ini)
+        with open(out_path.joinpath("@FILETABLE.ini"), "w") as outfile:
+            config.write(outfile)
 
 
 app = typer.Typer()
