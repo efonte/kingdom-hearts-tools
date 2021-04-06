@@ -280,8 +280,19 @@ def extract_hed(hed_path: Path, out_path: Path, extract_files: bool = True):
                     else entry_pkg.compressed_size
                 )
             )
-            for i in range(0, min(len(file), 0x100), 0x10):
-                decrypt_chunk(key, file, i)
+            # 0xFFFFFFFF = uncompressed?
+            # 0xFFFFFFFE = unencrypted and uncompressed?
+            if (
+                entry_pkg.compressed_size >> 28 == 0xF
+                and entry_pkg.compressed_size != 0xFFFFFFFF
+                and entry_pkg.compressed_size != 0xFFFFFFFE
+            ):
+                print(
+                    f"'{entry_pkg.entry_hed.get_name(hash_dict)}' {entry_pkg.compressed_size=:08X} {entry_pkg.decompressed_size=:08X} {entry_pkg.id1=:08X}"
+                )
+            if entry_pkg.compressed_size != 0xFFFFFFFE:
+                for i in range(0, min(len(file), 0x100), 0x10):
+                    decrypt_chunk(key, file, i)
             if entry_pkg.compressed_size >> 28 != 0xF:
                 file = zlib.decompress(file)
                 if len(file) != entry_pkg.decompressed_size:
@@ -319,8 +330,19 @@ def extract_hed(hed_path: Path, out_path: Path, extract_files: bool = True):
                         else asset.compressed_size
                     )
                 )
-                for i in range(0, min(len(asset_file), 0x100), 0x10):
-                    decrypt_chunk(key, asset_file, i)
+
+                # print(f"{asset}")
+                if (
+                    asset.compressed_size >> 28 == 0xF
+                    and asset.compressed_size != 0xFFFFFFFF
+                    and asset.compressed_size != 0xFFFFFFFE
+                ):
+                    print(
+                        f"{asset.name=} {asset.unk1=:08X} {asset.unk2=:08X} {asset.decompressed_size=:08X} {asset.compressed_size=:08X}"
+                    )
+                if asset.compressed_size != 0xFFFFFFFE:
+                    for i in range(0, min(len(asset_file), 0x100), 0x10):
+                        decrypt_chunk(key, asset_file, i)
                 if asset.compressed_size >> 28 != 0xF:
                     asset_file = zlib.decompress(asset_file)
                     if len(asset_file) != asset.decompressed_size_padding:
@@ -331,10 +353,6 @@ def extract_hed(hed_path: Path, out_path: Path, extract_files: bool = True):
                         print(f"{len(asset_file)=}")
                         exit()
 
-                # print(f"{asset}")
-                # print(
-                #     f"{asset.name=} {asset.unk1=:08X} {asset.unk2=:08X} {asset.decompressed_size=:08X} {asset.compressed_size=:08X}"
-                # )
                 if extract_files:
                     # print(file_path)
                     asset_path = file_path.parent.joinpath(
@@ -354,7 +372,9 @@ def extract_hed(hed_path: Path, out_path: Path, extract_files: bool = True):
             # print(f"-------------- {infile_pkg.tell():08X}")
             # print("--------------")
 
-        task_ini = progress.add_task("Saving file table ini file...", total=len(entries_pkg))
+        task_ini = progress.add_task(
+            "Saving file table ini file...", total=len(entries_pkg)
+        )
         config = configparser.ConfigParser()
         for i, entry_pkg in enumerate(entries_pkg):
             entry_pkg_dict = {
@@ -378,6 +398,14 @@ def extract_hed(hed_path: Path, out_path: Path, extract_files: bool = True):
             progress.advance(task_ini)
         with open(out_path.joinpath("@FILETABLE.ini"), "w") as outfile:
             config.write(outfile)
+
+
+def repack_hed(dir_path: Path, hed_path: Path):
+    config = configparser.ConfigParser()
+    config.read(dir_path.joinpath("@FILETABLE.ini"))
+
+    # for md5 in config.sections():
+    #     print(md5)
 
 
 app = typer.Typer()
@@ -408,6 +436,33 @@ def extract(
         output = input.with_suffix("")
 
     extract_hed(input, output, extract)
+
+
+@app.command()
+def repack(
+    input: Path = typer.Argument(..., help="folder path"),
+    output: Path = typer.Option(None, "--output", "-o", help="hed file path"),
+    extract: bool = typer.Option(
+        True,
+        "--extract/--no-extract",
+        "-e/-no-e",
+        help="Extract files",
+    ),
+    # verbose: bool = typer.Option(
+    #     False,
+    #     "--verbose",
+    #     "-v",
+    #     help="Verbose mode",
+    # ),
+):
+    if not input.is_dir():
+        print(f'Error. The folder "{input}" does not exist.')
+        raise typer.Abort()
+
+    if not output:
+        output = input.with_suffix("")
+
+    repack_hed(input, output)
 
 
 # @app.command()
