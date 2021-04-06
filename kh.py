@@ -3,9 +3,10 @@
 
 
 import configparser
-from dataclasses import dataclass
+import hashlib
 import os
 import zlib
+from dataclasses import dataclass
 from pathlib import Path
 from struct import pack, unpack
 from typing import Dict, List
@@ -21,18 +22,10 @@ class EntryHED:
     offset: int
     compressed_size: int
     decompressed_size: int
+    name: str = ""
 
     def __init__(self) -> None:
         pass
-
-    def get_name(self, hash_dict: Dict[str, str]) -> str:
-        try:
-            name = hash_dict[self.md5.lower()]
-        except KeyError:
-            name = self.md5.upper()
-        if name == "":
-            name = f"{self.md5.upper()}.dat"
-        return name
 
 
 @dataclass
@@ -48,11 +41,7 @@ class Asset:
 
     @property
     def decompressed_size_padding(self):
-        return (
-            self.decompressed_size
-            if self.decompressed_size % 16 == 0
-            else 16 + (self.decompressed_size // 16) * 16
-        )
+        return size_with_padding(self.decompressed_size)
 
 
 @dataclass
@@ -104,6 +93,10 @@ scramble_key = [
 # fmt: on
 
 
+def size_with_padding(size: int) -> int:
+    return size if size % 16 == 0 else 16 + (size // 16) * 16
+
+
 # https://github.com/Xeeynamo/OpenKh/pull/474
 def generate_key(seed: list, pass_count: int = 10) -> list:
     final_key = [None] * 0xB0
@@ -138,6 +131,14 @@ def decrypt_chunk(
 ) -> None:
     for i in reversed(range(pass_count + 1)):
         for j in range(0xF + 1):
+            ptr_data[j + index] ^= key[j + 0x10 * i]
+
+
+def encrypt_chunk(
+    key: bytes, ptr_data: bytearray, index: int, pass_count: int = 10
+) -> None:
+    for i in range(pass_count + 1):
+        for j in reversed(range(0xF + 1)):
             ptr_data[j + index] ^= key[j + 0x10 * i]
 
 
@@ -185,6 +186,12 @@ def extract_hed(hed_path: Path, out_path: Path, extract_files: bool = True):
         for i in range(num_entries):
             entry_hed = EntryHED()
             entry_hed.md5 = "".join([f"{b:02x}" for b in infile_hed.read(16)])
+            try:
+                entry_hed.name = hash_dict[entry_hed.md5.lower()]
+            except KeyError:
+                entry_hed.name = ""
+            if entry_hed.name == "":
+                entry_hed.name = f"{entry_hed.md5.upper()}.dat"
             (
                 entry_hed.offset,
                 entry_hed.compressed_size,
@@ -216,7 +223,7 @@ def extract_hed(hed_path: Path, out_path: Path, extract_files: bool = True):
                 entry_pkg.compressed_size,
                 entry_pkg.id1,
             ) = unpack("IIII", bytearray(seed))
-            # print(f"{entry_hed.get_name(hash_dict)=}")
+            # print(f"{entry_hed.name=}")
             # if entry_hed.compressed_size != entry_pkg.compressed_size + 16: # Only if num_assets == 0
             # print(f"{entry_hed.compressed_size=}")
             # print(f"{entry_pkg.compressed_size=}")
@@ -288,7 +295,7 @@ def extract_hed(hed_path: Path, out_path: Path, extract_files: bool = True):
                 and entry_pkg.compressed_size != 0xFFFFFFFE
             ):
                 print(
-                    f"'{entry_pkg.entry_hed.get_name(hash_dict)}' {entry_pkg.compressed_size=:08X} {entry_pkg.decompressed_size=:08X} {entry_pkg.id1=:08X}"
+                    f"'{entry_pkg.entry_hed.name}' {entry_pkg.compressed_size=:08X} {entry_pkg.decompressed_size=:08X} {entry_pkg.id1=:08X}"
                 )
             if entry_pkg.compressed_size != 0xFFFFFFFE:
                 for i in range(0, min(len(file), 0x100), 0x10):
@@ -301,7 +308,7 @@ def extract_hed(hed_path: Path, out_path: Path, extract_files: bool = True):
                     print(f"{entry_pkg.compressed_size=}")
                     exit()
 
-            file_path = out_path.joinpath(f"{entry_hed.get_name(hash_dict)}")
+            file_path = out_path.joinpath(f"{entry_hed.name}")
             if extract_files:
                 file_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(file_path, "wb") as outfile:
@@ -381,6 +388,7 @@ def extract_hed(hed_path: Path, out_path: Path, extract_files: bool = True):
                 "hed_compressed_size": entry_pkg.entry_hed.compressed_size,
                 "hed_decompressed_size": entry_pkg.entry_hed.decompressed_size,
                 # "hed_md5": entry_pkg.entry_hed.md5,
+                "hed_name": entry_pkg.entry_hed.name,
                 "hed_offset": entry_pkg.entry_hed.offset,
                 "pkg_compressed_size": entry_pkg.compressed_size,
                 "pkg_decompressed_size": entry_pkg.decompressed_size,
@@ -401,11 +409,169 @@ def extract_hed(hed_path: Path, out_path: Path, extract_files: bool = True):
 
 
 def repack_hed(dir_path: Path, hed_path: Path):
+    dir_path = dir_path.absolute()
     config = configparser.ConfigParser()
     config.read(dir_path.joinpath("@FILETABLE.ini"))
 
-    # for md5 in config.sections():
-    #     print(md5)
+    file_path_list = []
+    entries_pkg: List[EntryPKG] = []
+    # hash_dict = get_hashes(hed_path)
+    for i, md5 in enumerate(config.sections()):
+        # file_path_list.append(get_name(hash_dict, md5))
+        entry_hed = EntryHED()
+        entry_hed.md5 = md5
+        entry_hed.offset = -1
+        entry_hed.compressed_size = int(config[md5]["hed_compressed_size"])
+        entry_hed.decompressed_size = int(config[md5]["hed_decompressed_size"])
+        entry_hed.name = config[md5]["hed_name"]
+
+        entry_pkg = EntryPKG(entry_hed)
+        entry_pkg.compressed_size = int(config[md5]["pkg_compressed_size"])
+        entry_pkg.decompressed_size = int(config[md5]["pkg_decompressed_size"])
+        entry_pkg.id1 = int(config[md5]["pkg_id1"])
+        entry_pkg.num_assets = int(config[md5]["pkg_num_assets"])
+
+        for j in range(entry_pkg.num_assets):
+            asset = Asset()
+            asset.name = config[md5][f"asset{j}_name"]
+            asset.unk1 = int(config[md5][f"asset{j}_unk1"])
+            asset.unk2 = int(config[md5][f"asset{j}_unk2"])
+            asset.decompressed_size = int(config[md5][f"asset{j}_decompressed_size"])
+            asset.compressed_size = int(config[md5][f"asset{j}_compressed_size"])
+            entry_pkg.assets.append(asset)
+        # print(f"{entry_pkg}")
+        entries_pkg.append(entry_pkg)
+
+    # file_path_list = list(dir_path.glob("**/*.*"))
+    # md5_list = [md5 for md5 in config.sections()]
+    # for file_path in file_path_list:
+    #     print(file_path)
+    #     exit()
+    # for file_path in file_path_list:
+    #     md5 = hashlib.md5(
+    #         file_path.relative_to(dir_path).as_posix().encode()
+    #     ).hexdigest()
+    #     entry_pkg = next((pkg for pkg in entries_pkg if pkg.entry_hed.md5 == md5), None)
+    #     if not entry_pkg:  # file name = hash
+    #         md5 = file_path.stem.lower()
+    #         entry_pkg = next(
+    #             (pkg for pkg in entries_pkg if pkg.entry_hed.md5 == md5), None
+    #         )
+    #     if not entry_pkg:
+    #         print("Error md5 not found in @FILETABLE.ini")
+    #         exit(1)
+    # exit()
+
+    outfile_pkg = open(hed_path, "wb")
+    for i, entry_pkg in enumerate(entries_pkg):
+        with open(dir_path.joinpath(entry_pkg.entry_hed.name), "rb") as infile:
+            file = infile.read()
+
+        decompressed_size = len(file)
+        if entry_pkg.compressed_size >> 28 != 0xF:
+            file = zlib.compress(file)
+        file += b"\xCD" * (size_with_padding(len(file)) - len(file))  # padding
+        compressed_size = len(file)
+        file = bytearray(file)
+
+        # md5 = hashlib.md5(
+        #     file_path.relative_to(dir_path).as_posix().encode()
+        # ).hexdigest()
+        # entry_pkg = next((pkg for pkg in entries_pkg if pkg.entry_hed.md5 == md5), None)
+        # if not entry_pkg:  # file name = hash
+        #     md5 = file_path.stem.lower()
+        #     entry_pkg = next(
+        #         (pkg for pkg in entries_pkg if pkg.entry_hed.md5 == md5), None
+        #     )
+        # if not entry_pkg:
+        #     print("Error md5 not found in @FILETABLE.ini")
+        #     exit(1)
+        # print(f"{entry_pkg}")
+
+        if (
+            entry_pkg.compressed_size == 0xFFFFFFFF
+            or entry_pkg.compressed_size == 0xFFFFFFFE
+        ):
+            compressed_size = entry_pkg.compressed_size
+
+        seed = list(
+            pack(
+                "IIII",
+                # entry_pkg.decompressed_size,
+                decompressed_size,
+                entry_pkg.num_assets,
+                # entry_pkg.compressed_size,
+                compressed_size,
+                entry_pkg.id1,
+            )
+        )
+        # print(f"{seed=}")
+        key = generate_key(seed)
+
+        for j in range(0, min(len(file), 0x100), 0x10):
+            encrypt_chunk(key, file, i)
+
+        outfile_pkg.write(bytearray(seed))
+
+        assets_files = []
+
+        for asset in entry_pkg.assets:
+            outfile_pkg.write(pack("32s", asset.name.encode("utf-8")))
+
+            with open(
+                dir_path.joinpath(
+                    f"{Path(entry_pkg.entry_hed.name).with_suffix('')}/{asset.name}"
+                ),
+                "rb",
+            ) as infile:
+                asset_file = infile.read()
+
+            asset_decompressed_size = len(asset_file)
+            if asset.compressed_size >> 28 != 0xF:
+                asset_file = zlib.compress(asset_file)
+            asset_file += b"\xCD" * (
+                size_with_padding(len(asset_file)) - len(asset_file)
+            )  # padding
+            asset_compressed_size = len(asset_file)
+            asset_file = bytearray(asset_file)
+
+            if asset.compressed_size != 0xFFFFFFFE:
+                for j in range(0, min(len(asset_file), 0x100), 0x10):
+                    encrypt_chunk(key, asset_file, i)
+
+            assets_files.append(asset_file)
+
+            if (
+                asset.compressed_size == 0xFFFFFFFF
+                or asset.compressed_size == 0xFFFFFFFE
+            ):
+                asset_compressed_size = asset.compressed_size
+
+            outfile_pkg.write(
+                pack(
+                    "IIII",
+                    asset.unk1,
+                    asset.unk2,
+                    # asset.decompressed_size,
+                    asset_decompressed_size,
+                    # asset.compressed_size,
+                    asset_compressed_size,
+                )
+            )
+
+        outfile_pkg.write(file)
+
+        for asset_file in assets_files:
+
+            outfile_pkg.write(asset_file)
+
+        # if entry_pkg.num_assets > 0:
+        #     exit()
+
+        # with open(
+        #     dir_path.joinpath("2D687293A81FC0175EE6C533BF249522.dat"), "wb"
+        # ) as outfile:
+        #     outfile.write(file)
 
 
 app = typer.Typer()
@@ -460,7 +626,12 @@ def repack(
         raise typer.Abort()
 
     if not output:
-        output = input.with_suffix("")
+        # output = input.with_suffix(".pkg")
+        output = input.with_name(f"{input.stem}_generated.pkg")
+
+    # if output.is_file():
+    #     print(f'Error. The pkg "{output}" already exist.')
+    #     raise typer.Abort()
 
     repack_hed(input, output)
 
