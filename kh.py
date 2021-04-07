@@ -536,7 +536,7 @@ def repack_hed(dir_path: Path, hed_path: Path):
             asset_file += b"\xCD" * (
                 size_with_padding(len(asset_file)) - len(asset_file)
             )  # padding
-            # asset_compressed_size = len(asset_file)
+            asset_compressed_size = len(asset_file)
             asset_file = bytearray(asset_file)
 
             # if asset.compressed_size != 0xFFFFFFFE:
@@ -576,23 +576,18 @@ def repack_hed(dir_path: Path, hed_path: Path):
         outfile_hed.write(bytes.fromhex(entry_pkg.entry_hed.md5))
         hed_compressed_size = (
             0x10
-            + (0x20 + 0x10)
-            + entry_pkg.num_assets
+            + (0x20 + 0x10) * entry_pkg.num_assets
             + decompressed_size
-            + sum(a.decompressed_size for a in entry_pkg.assets) * entry_pkg.num_assets
+            # + sum(a.decompressed_size for a in entry_pkg.assets) * entry_pkg.num_assets
         )
-        # print(f"{hed_compressed_size=}")
-        hed_decompressed_size = (
-            decompressed_size
-            + sum(a.decompressed_size for a in entry_pkg.assets) * entry_pkg.num_assets
-        )
-        # print(f"{hed_decompressed_size=}")
+        hed_decompressed_size = decompressed_size
+        # print(f"{i=:04} {hed_compressed_size=:08X} {hed_decompressed_size=:08X}")
         outfile_hed.write(
             pack(
                 "Qii",
                 offset,
-                hed_compressed_size,
-                hed_decompressed_size,
+                hed_compressed_size,  # I think it is not read by the game
+                hed_decompressed_size,  # I think it is not read by the game
             )
         )
 
