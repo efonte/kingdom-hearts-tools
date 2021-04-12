@@ -18,10 +18,10 @@ from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
 
 @dataclass
 class EntryHED:
-    md5: str
-    offset: int
-    compressed_size: int
-    decompressed_size: int
+    md5: str = ""
+    offset: int = None
+    compressed_size: int = None
+    decompressed_size: int = None
     name: str = ""
 
     def __init__(self) -> None:
@@ -30,11 +30,11 @@ class EntryHED:
 
 @dataclass
 class Asset:
-    name: str
-    unk1: int
-    unk2: int
-    decompressed_size: int
-    compressed_size: int
+    name: str = ""
+    unk1: int = None
+    unk2: int = None
+    decompressed_size: int = None
+    compressed_size: int = None
 
     def __init__(self) -> None:
         pass
@@ -46,12 +46,12 @@ class Asset:
 
 @dataclass
 class EntryPKG:
-    entry_hed: EntryHED
-    decompressed_size: int
-    num_assets: int
-    compressed_size: int
-    id1: int
-    assets: List[Asset]
+    entry_hed: EntryHED = None
+    decompressed_size: int = None
+    num_assets: int = None
+    compressed_size: int = None
+    id1: int = None
+    assets: List[Asset] = None
 
     def __init__(self, entry_hed: EntryHED) -> None:
         self.entry_hed = entry_hed
@@ -197,7 +197,7 @@ def extract_hed(hed_path: Path, out_path: Path, extract_files: bool = True):
                 entry_hed.offset,
                 entry_hed.compressed_size,
                 entry_hed.decompressed_size,
-            ) = unpack("Qii", infile_hed.read(16))
+            ) = unpack("QII", infile_hed.read(16))
             # print(f"{entry_hed}")
 
             entries_hed.append(entry_hed)
@@ -209,11 +209,19 @@ def extract_hed(hed_path: Path, out_path: Path, extract_files: bool = True):
         entries_pkg: List[EntryPKG] = []
         for i, entry_hed in enumerate(entries_hed, start=1):
             entry_pkg = EntryPKG(entry_hed)
-            # if infile_pkg.tell() != entry_hed.offset:
-            #     # print (f"{i=}")
-            #     print(f"Error. Last pkg offset: {infile_pkg.tell():08X}")
-            #     print(f"{entry_hed.offset=:08X}")
-            #     exit()
+            if (  # Fix entry 5587 in Recom.hed
+                entry_pkg.entry_hed.compressed_size == 0
+                and entry_pkg.entry_hed.decompressed_size == 0xFDFDFDFD
+            ):
+                entries_pkg.append(entry_pkg)
+                progress.advance(task_pkg)
+                continue
+            offset = infile_pkg.tell()
+            if infile_pkg.tell() != entry_hed.offset:
+                # print (f"{i=}")
+                print(f"Error. Last pkg offset: {infile_pkg.tell():08X}")
+                print(f"{entry_hed.offset=:08X}")
+                exit()
             # print(f"{infile_pkg.tell():08X}")
             infile_pkg.seek(entry_hed.offset)  # TODO
             seed = list(unpack("16B", infile_pkg.read(16)))
@@ -268,15 +276,19 @@ def extract_hed(hed_path: Path, out_path: Path, extract_files: bool = True):
             key = generate_key(seed)
             # print(f"{key=}")
             if entry_pkg.compressed_size >> 28 == 0xF:
+                # 0xFFFFFFFF = uncompressed?
+                # 0xFFFFFFFE = unencrypted and uncompressed?
                 if (
                     entry_pkg.compressed_size != 0xFFFFFFFF
                     and entry_pkg.compressed_size != 0xFFFFFFFE
                 ):
-                    print(f"{infile_pkg.tell():08X}")
-                    print(f"{entry_pkg.compressed_size=:08X}")
+                    print(f"{infile_pkg.tell()=:08X} {entry_pkg.compressed_size=:08X}")
+                    print(
+                        f"'{entry_pkg.entry_hed.name}' {entry_pkg.compressed_size=:08X} {entry_pkg.decompressed_size=:08X} {entry_pkg.id1=:08X}"
+                    )
                     # exit()
             elif entry_pkg.compressed_size % 16 != 0:
-                print("Error 1")
+                print("Error entry_pkg.compressed_size % 16 != 0")
                 print(f"{infile_pkg.tell():08X}")
                 print(f"{entry_pkg.compressed_size=:08X}")
                 print(f"{entry_pkg.decompressed_size=:08X}")
@@ -288,23 +300,18 @@ def extract_hed(hed_path: Path, out_path: Path, extract_files: bool = True):
                     else entry_pkg.compressed_size
                 )
             )
-            # 0xFFFFFFFF = uncompressed?
-            # 0xFFFFFFFE = unencrypted and uncompressed?
-            if (
-                entry_pkg.compressed_size >> 28 == 0xF
-                and entry_pkg.compressed_size != 0xFFFFFFFF
-                and entry_pkg.compressed_size != 0xFFFFFFFE
-            ):
-                print(
-                    f"'{entry_pkg.entry_hed.name}' {entry_pkg.compressed_size=:08X} {entry_pkg.decompressed_size=:08X} {entry_pkg.id1=:08X}"
-                )
+
             if entry_pkg.compressed_size != 0xFFFFFFFE:
                 for i in range(0, min(len(file), 0x100), 0x10):
                     decrypt_chunk(key, file, i)
+            # if (
+            #     entry_pkg.decompressed_size_padding - entry_pkg.decompressed_size > 0
+            # ):  # remove padding
+            #     file = file[0 : entry_pkg.decompressed_size]
             if entry_pkg.compressed_size >> 28 != 0xF:
                 file = zlib.decompress(file)
                 if len(file) != entry_pkg.decompressed_size:
-                    print("Error 3")
+                    print("Error len(file) != entry_pkg.decompressed_size")
                     print(f"{entry_pkg.decompressed_size=}")
                     print(f"{entry_pkg.compressed_size=}")
                     exit()
@@ -313,6 +320,9 @@ def extract_hed(hed_path: Path, out_path: Path, extract_files: bool = True):
             if extract_files:
                 file_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(file_path, "wb") as outfile:
+                    # file = file.rstrip(b"\xCD")
+                    # if len(file) % 16 == 0:
+                    #     print ("Error removing file pading")
                     outfile.write(file)
 
             for asset in entry_pkg.assets:
@@ -326,7 +336,7 @@ def extract_hed(hed_path: Path, out_path: Path, extract_files: bool = True):
                         print(f"{asset.compressed_size=:08X}")
                         # exit()
                 elif asset.compressed_size % 16 != 0:
-                    print("Error 2")
+                    print("Error asset.compressed_size % 16 != 0")
                     print(f"{infile_pkg.tell():08X}")
                     print(f"{asset.compressed_size=:08X}")
                     print(f"{asset.decompressed_size=:08X}")
@@ -340,21 +350,35 @@ def extract_hed(hed_path: Path, out_path: Path, extract_files: bool = True):
                 )
 
                 # print(f"{asset}")
-                if (
-                    asset.compressed_size >> 28 == 0xF
-                    and asset.compressed_size != 0xFFFFFFFF
-                    and asset.compressed_size != 0xFFFFFFFE
-                ):
-                    print(
-                        f"{asset.name=} {asset.unk1=:08X} {asset.unk2=:08X} {asset.decompressed_size=:08X} {asset.compressed_size=:08X}"
-                    )
+                if asset.compressed_size >> 28 == 0xF:
+                    if (
+                        asset.compressed_size != 0xFFFFFFFF
+                        and asset.compressed_size != 0xFFFFFFFE
+                    ):
+
+                        print(
+                            f"{asset.name=} {asset.unk1=:08X} {asset.unk2=:08X} {asset.decompressed_size=:08X} {asset.compressed_size=:08X}"
+                        )
+                elif asset.compressed_size % 16 != 0:
+                    print("Error asset.compressed_size % 16 != 0")
+                    print(f"{infile_pkg.tell():08X}")
+                    print(f"{asset.compressed_size=:08X}")
+                    print(f"{asset.decompressed_size=:08X}")
+                    exit()
+
                 if asset.compressed_size != 0xFFFFFFFE:
                     for i in range(0, min(len(asset_file), 0x100), 0x10):
                         decrypt_chunk(key, asset_file, i)
+                if (
+                    asset.decompressed_size_padding - asset.decompressed_size > 0
+                ):  # remove padding
+                    asset_file = asset_file[0 : asset.decompressed_size]
                 if asset.compressed_size >> 28 != 0xF:
                     asset_file = zlib.decompress(asset_file)
                     if len(asset_file) != asset.decompressed_size_padding:
-                        print("Error 4")
+                        print(
+                            "Error len(asset_file) != asset.decompressed_size_padding"
+                        )
                         print(f"{infile_pkg.tell():08X}")
                         print(f"{asset.decompressed_size_padding=}")
                         print(f"{asset.compressed_size=}")
@@ -371,6 +395,35 @@ def extract_hed(hed_path: Path, out_path: Path, extract_files: bool = True):
                     # print(f"{file_path.stem=}")
                     with open(asset_path, "wb") as outfile:
                         outfile.write(asset_file)
+
+                # Check sizes
+                hed_compressed_size = (
+                    entry_pkg.decompressed_size
+                    if entry_pkg.compressed_size >> 28 == 0xF
+                    # or entry_pkg.compressed_size == 0
+                    else entry_pkg.compressed_size
+                ) + 0x10  # values
+                for asset in entry_pkg.assets:
+                    hed_compressed_size += (
+                        (
+                            asset.decompressed_size_padding
+                            if asset.compressed_size >> 28 == 0xF
+                            # or asset.compressed_size == 0
+                            else asset.compressed_size
+                        )
+                        + 0x20  # name
+                        + 0x10  # values
+                    )
+                hed_decompressed_size = entry_pkg.decompressed_size
+                if (
+                    entry_pkg.entry_hed.compressed_size != hed_compressed_size
+                    or entry_pkg.entry_hed.decompressed_size != hed_decompressed_size
+                ):
+                    print(f"{offset=:08X}")
+                    print(f"{infile_pkg.tell():08X}")
+                    print(f"{hed_compressed_size=}")
+                    print(entry_pkg)
+                    exit()
 
                 # if asset.unk2 == -1:
                 #     exit()
@@ -455,19 +508,14 @@ def repack_hed(dir_path: Path, hed_path: Path):
         compressed_size = len(file)
         file = bytearray(file)
 
-        if (
-            entry_pkg.compressed_size != 0xFFFFFFFF
-            and entry_pkg.compressed_size != 0xFFFFFFFE
-        ):
+        if entry_pkg.compressed_size >> 28 == 0xF:
             compressed_size = entry_pkg.compressed_size
 
         seed = list(
             pack(
                 "IIII",
-                # entry_pkg.decompressed_size,
                 decompressed_size,
                 entry_pkg.num_assets,
-                # entry_pkg.compressed_size,
                 compressed_size,
                 # 0xFFFFFFFE,
                 entry_pkg.id1,
@@ -476,7 +524,7 @@ def repack_hed(dir_path: Path, hed_path: Path):
         # print(f"{seed=}")
         key = generate_key(seed)
 
-        if entry_pkg.compressed_size != 0xFFFFFFFE:
+        if compressed_size != 0xFFFFFFFE:
             for j in range(0, min(len(file), 0x100), 0x10):
                 encrypt_chunk(key, file, j)
 
@@ -510,10 +558,7 @@ def repack_hed(dir_path: Path, hed_path: Path):
 
             assets_files.append(asset_file)
 
-            if (
-                asset.compressed_size != 0xFFFFFFFF
-                and asset.compressed_size != 0xFFFFFFFE
-            ):
+            if asset.compressed_size >> 28 == 0xF:
                 asset_compressed_size = asset.compressed_size
 
             outfile_pkg.write(
@@ -521,14 +566,13 @@ def repack_hed(dir_path: Path, hed_path: Path):
                     "IIII",
                     asset.unk1,
                     asset.unk2,
-                    # asset.decompressed_size,
                     asset_decompressed_size,
-                    # asset.compressed_size,
                     asset_compressed_size,
                     # 0xFFFFFFFE,
                 )
             )
             asset.decompressed_size = asset_decompressed_size
+            asset.compressed_size = asset_compressed_size
 
         outfile_pkg.write(file)
 
@@ -539,20 +583,21 @@ def repack_hed(dir_path: Path, hed_path: Path):
         #     exit()
 
         outfile_hed.write(bytes.fromhex(entry_pkg.entry_hed.md5))
+
         hed_compressed_size = (
-            0x10
-            + (0x20 + 0x10) * entry_pkg.num_assets
-            + compressed_size
-            # + sum(a.decompressed_size for a in entry_pkg.assets) * entry_pkg.num_assets
-        )
+            decompressed_size if compressed_size >> 28 == 0xF else compressed_size
+        ) + 0x10  # values
+
         for asset in entry_pkg.assets:
-            if (
-                asset.compressed_size != 0xFFFFFFFF
-                and asset.compressed_size != 0xFFFFFFFE
-            ):
-                hed_compressed_size += asset.compressed_size
-            else:
-                hed_compressed_size += asset.decompressed_size
+            hed_compressed_size += (
+                (
+                    asset.decompressed_size_padding
+                    if asset.compressed_size >> 28 == 0xF
+                    else asset.compressed_size
+                )
+                + 0x20  # names
+                + 0x10  # values
+            )
         hed_decompressed_size = decompressed_size
         if (
             entry_pkg.entry_hed.compressed_size != hed_compressed_size
@@ -570,7 +615,7 @@ def repack_hed(dir_path: Path, hed_path: Path):
                 print(
                     f"{i=:04} {asset.compressed_size=:08X} {asset.decompressed_size=:08X}"
                 )
-            exit()
+            # exit()
         outfile_hed.write(
             pack(
                 "Qii",
