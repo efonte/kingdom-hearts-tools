@@ -439,23 +439,27 @@ def extract_hed(hed_path: Path, out_path: Path, extract_files: bool = True):
         config = configparser.ConfigParser()
         for i, entry_pkg in enumerate(entries_pkg):
             entry_pkg_dict = {
-                "hed_compressed_size": entry_pkg.entry_hed.compressed_size,
-                "hed_decompressed_size": entry_pkg.entry_hed.decompressed_size,
+                "hed_compressed_size": f"{entry_pkg.entry_hed.compressed_size:X}",
+                "hed_decompressed_size": f"{entry_pkg.entry_hed.decompressed_size:X}",
                 # "hed_md5": entry_pkg.entry_hed.md5,
                 "hed_name": entry_pkg.entry_hed.name,
-                "hed_offset": entry_pkg.entry_hed.offset,
-                "pkg_compressed_size": entry_pkg.compressed_size,
-                "pkg_decompressed_size": entry_pkg.decompressed_size,
-                "pkg_id1": entry_pkg.id1,
-                "pkg_num_assets": entry_pkg.num_assets,
+                "hed_offset": f"{entry_pkg.entry_hed.offset:X}",
+                "pkg_compressed_size": f"{entry_pkg.compressed_size:X}",
+                "pkg_decompressed_size": f"{entry_pkg.decompressed_size:X}",
+                "pkg_id1": f"{entry_pkg.id1:X}",
+                "pkg_num_assets": f"{entry_pkg.num_assets:X}",
                 # assets: List[Asset]
             }
             for j, asset in enumerate(entry_pkg.assets):
                 entry_pkg_dict[f"asset{j}_name"] = asset.name
-                entry_pkg_dict[f"asset{j}_unk1"] = asset.unk1
-                entry_pkg_dict[f"asset{j}_unk2"] = asset.unk2
-                entry_pkg_dict[f"asset{j}_decompressed_size"] = asset.decompressed_size
-                entry_pkg_dict[f"asset{j}_compressed_size"] = asset.compressed_size
+                entry_pkg_dict[f"asset{j}_unk1"] = f"{asset.unk1:X}"
+                entry_pkg_dict[f"asset{j}_unk2"] = f"{asset.unk2:X}"
+                entry_pkg_dict[
+                    f"asset{j}_decompressed_size"
+                ] = f"{asset.decompressed_size:X}"
+                entry_pkg_dict[
+                    f"asset{j}_compressed_size"
+                ] = f"{asset.compressed_size:X}"
             config[entry_pkg.entry_hed.md5] = entry_pkg_dict
             progress.advance(task_ini)
         with open(out_path.joinpath("@FILETABLE.ini"), "w") as outfile:
@@ -472,23 +476,25 @@ def repack_hed(dir_path: Path, hed_path: Path):
         entry_hed = EntryHED()
         entry_hed.md5 = md5
         entry_hed.offset = -1
-        entry_hed.compressed_size = int(config[md5]["hed_compressed_size"])
-        entry_hed.decompressed_size = int(config[md5]["hed_decompressed_size"])
+        entry_hed.compressed_size = int(config[md5]["hed_compressed_size"], 16)
+        entry_hed.decompressed_size = int(config[md5]["hed_decompressed_size"], 16)
         entry_hed.name = config[md5]["hed_name"]
 
         entry_pkg = EntryPKG(entry_hed)
-        entry_pkg.compressed_size = int(config[md5]["pkg_compressed_size"])
-        entry_pkg.decompressed_size = int(config[md5]["pkg_decompressed_size"])
-        entry_pkg.id1 = int(config[md5]["pkg_id1"])
-        entry_pkg.num_assets = int(config[md5]["pkg_num_assets"])
+        entry_pkg.compressed_size = int(config[md5]["pkg_compressed_size"], 16)
+        entry_pkg.decompressed_size = int(config[md5]["pkg_decompressed_size"], 16)
+        entry_pkg.id1 = int(config[md5]["pkg_id1"], 16)
+        entry_pkg.num_assets = int(config[md5]["pkg_num_assets"], 16)
 
         for j in range(entry_pkg.num_assets):
             asset = Asset()
             asset.name = config[md5][f"asset{j}_name"]
-            asset.unk1 = int(config[md5][f"asset{j}_unk1"])
-            asset.unk2 = int(config[md5][f"asset{j}_unk2"])
-            asset.decompressed_size = int(config[md5][f"asset{j}_decompressed_size"])
-            asset.compressed_size = int(config[md5][f"asset{j}_compressed_size"])
+            asset.unk1 = int(config[md5][f"asset{j}_unk1"], 16)
+            asset.unk2 = int(config[md5][f"asset{j}_unk2"], 16)
+            asset.decompressed_size = int(
+                config[md5][f"asset{j}_decompressed_size"], 16
+            )
+            asset.compressed_size = int(config[md5][f"asset{j}_compressed_size"], 16)
             entry_pkg.assets.append(asset)
         # print(f"{entry_pkg}")
         entries_pkg.append(entry_pkg)
